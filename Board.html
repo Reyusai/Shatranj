@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- viewport-fit=cover keeps the layout inside notches on modern phones.
+       Pinch/double-tap zoom on the board itself is blocked in CSS + JS. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#5b6b53" />
+  <title>Chess UI</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ============================================================
+       SVG PIECE SPRITE (UI-only)
+       Shape library only: script.js copies these shapes into a real
+       inline <svg> for every piece (pieceSVG()). Shapes are painted
+       twice (outline pass .o, fill pass .f) so the outline stays clean
+       where they overlap; .d = inner detail lines. Colour is applied
+       by plain CSS selectors (.piece-white .f, .piece-black .f ...),
+       so White and Black can never end up the same colour.
+       ============================================================ -->
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <!-- Pawn -->
+      <g id="s-P">
+        <circle cx="50" cy="27" r="13"/>
+        <rect x="32" y="39" width="36" height="8" rx="4"/>
+        <path d="M42 45 h16 c0 10 4 17 13 32 H29 c9-15 13-22 13-32z"/>
+        <rect x="18" y="74" width="64" height="15" rx="6"/>
+      </g>
+      <!-- Rook -->
+      <g id="s-R">
+        <path d="M28 46 V16 H40 V27 H44.5 V16 H55.5 V27 H60 V16 H72 V46 Z"/>
+        <path d="M33 44 H67 L70 76 H30 Z"/>
+        <rect x="18" y="72" width="64" height="17" rx="6"/>
+      </g>
+      <g id="d-R"><path d="M33 47 H67 M36 73 H64"/></g>
+      <!-- Bishop -->
+      <g id="s-B">
+        <circle cx="50" cy="13" r="6"/>
+        <path d="M50 17 C68 29 72 46 63 58 C61 62 62 66 66 68 H34 C38 66 39 62 37 58 C28 46 32 29 50 17Z"/>
+        <rect x="27" y="64" width="46" height="10" rx="5"/>
+        <rect x="18" y="74" width="64" height="15" rx="6"/>
+      </g>
+      <g id="d-B"><path d="M45 47 L57 31 M43 69 H57"/></g>
+      <!-- Knight -->
+      <g id="s-N">
+        <path d="M30 78 C29 64 34 54 43 47 C37 47 32 51 27 56 L18 49 C19 40 30 29 38 23 L40 10 L49 19 C62 18 77 29 79 50 C80 62 76 70 76 78 Z"/>
+        <rect x="18" y="74" width="64" height="15" rx="6"/>
+      </g>
+      <g id="d-N">
+        <circle class="dot" cx="49" cy="31" r="2.4"/>
+        <path d="M60 27 C69 36 71 50 68 64 M24 52 L29 50"/>
+      </g>
+      <!-- Queen -->
+      <g id="s-Q">
+        <circle cx="20" cy="30" r="5"/><circle cx="35" cy="21" r="5"/>
+        <circle cx="50" cy="17" r="5"/>
+        <circle cx="65" cy="21" r="5"/><circle cx="80" cy="30" r="5"/>
+        <path d="M30 76 L20 34 L31 56 L35 25 L43 56 L50 21 L57 56 L65 25 L69 56 L80 34 L70 76 Z"/>
+        <rect x="23" y="70" width="54" height="8" rx="4"/>
+        <rect x="18" y="76" width="64" height="13" rx="6"/>
+      </g>
+      <g id="d-Q"><path d="M34 73 H66"/></g>
+      <!-- King -->
+      <g id="s-K">
+        <path d="M45 6 h10 v7 h7 v10 h-7 v7 h-10 v-7 h-7 v-10 h7z"/>
+        <path d="M50 30 C69 30 78 44 72 58 C69 64 69 70 72 76 H28 C31 70 31 64 28 58 C22 44 31 30 50 30Z"/>
+        <rect x="18" y="72" width="64" height="17" rx="6"/>
+      </g>
+      <g id="d-K"><path d="M32 60 H68"/></g>
+    </defs>
+
+  </svg>
+
+  <div class="app" id="app">
+
+    <!-- Header -->
+    <header>
+      <h1>♟ Chess</h1>
+      <div class="header-actions">
+        <!-- Sound + theme toggles: UI-only additions, same event-handler pattern as before -->
+        <button id="soundToggle" class="icon-btn" type="button" aria-pressed="false" aria-label="Mute sound effects" title="Toggle sound">🔊</button>
+        <button id="themeToggle" class="icon-btn" type="button" aria-pressed="false" aria-label="Toggle dark mode" title="Toggle theme">🌙</button>
+      </div>
+    </header>
+
+    <!-- Game Info: whose turn it is + the "AI Thinking..." indicator -->
+    <div class="info">
+      <p id="turn">Turn: White</p>
+      <div id="aiThinking" class="ai-thinking" hidden role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>AI Thinking<span class="dots" aria-hidden="true"></span></span>
+      </div>
+    </div>
+
+    <!-- Game controls (Undo only appears in Player vs Player mode) -->
+    <div class="controls">
+      <button id="undoBtn" class="btn btn-ghost" type="button" disabled><span aria-hidden="true">↶</span><span>Undo</span></button>
+      <button id="menuBtn" class="btn btn-ghost" type="button"><span aria-hidden="true">☰</span><span>Menu</span></button>
+      <button id="resetBtn" type="button"><span class="btn-icon" aria-hidden="true">↻</span><span>New Game</span></button>
+    </div>
+
+    <!-- Main Container -->
+    <div class="game-container">
+
+      <!-- Captured Pieces -->
+      <div class="captured">
+        <div>
+          <h3>Captured (White)</h3>
+          <div id="capturedWhite" class="captured-row"></div>
+        </div>
+        <div>
+          <h3>Captured (Black)</h3>
+          <div id="capturedBlack" class="captured-row"></div>
+        </div>
+      </div>
+
+      <!-- Chessboard: file/rank labels + board laid out as one
+           responsive grid, so nothing relies on fixed pixel widths. -->
+      <div class="board-wrapper">
+       <div class="board-column">
+
+        <!-- Black player bar (top): name, rating, clock -->
+        <div class="player-bar" id="barBlack">
+          <span class="pb-dot black" aria-hidden="true"></span>
+          <span class="pb-name" id="nameBlack">Black</span>
+          <span class="pb-rating" id="ratingBlack"></span>
+          <span class="clock" id="clockBlack" aria-label="Black clock">0:00</span>
+        </div>
+
+        <div class="board-shell">
+          <div class="labels top">
+            <span>a</span><span>b</span><span>c</span><span>d</span>
+            <span>e</span><span>f</span><span>g</span><span>h</span>
+          </div>
+
+          <div class="row-labels">
+            <span>8</span><span>7</span><span>6</span><span>5</span>
+            <span>4</span><span>3</span><span>2</span><span>1</span>
+          </div>
+
+          <div id="board" class="board"></div>
+
+          <div class="labels bottom">
+            <span>a</span><span>b</span><span>c</span><span>d</span>
+            <span>e</span><span>f</span><span>g</span><span>h</span>
+          </div>
+        </div>
+
+        <!-- White player bar (bottom) -->
+        <div class="player-bar" id="barWhite">
+          <span class="pb-dot white" aria-hidden="true"></span>
+          <span class="pb-name" id="nameWhite">White</span>
+          <span class="pb-rating" id="ratingWhite"></span>
+          <span class="clock" id="clockWhite" aria-label="White clock">0:00</span>
+        </div>
+
+       </div>
+      </div>
+
+      <!-- Move history (scrollable) -->
+      <section class="history" aria-label="Move history">
+        <h3>Moves</h3>
+        <ol id="moveList" class="move-list"><li class="empty">No moves yet</li></ol>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- ============================================================
+       SETUP SCREEN (game mode + AI difficulty + time control)
+       Shown when the page loads and from the "Menu" button.
+       game.js reads the chosen buttons (aria-checked="true") and
+       stores them in Game.state.
+       ============================================================ -->
+  <div id="setupModal" class="modal-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="setupTitle" aria-hidden="true">
+    <div class="modal-card setup-card" tabindex="-1">
+      <h2 id="setupTitle">♟ New Game</h2>
+
+      <div class="opt-group" data-group="mode" role="radiogroup" aria-label="Game mode">
+        <h3>Game mode</h3>
+        <div class="seg seg-2">
+          <button type="button" class="seg-btn" role="radio" data-value="pvp" aria-checked="false">
+            <span class="seg-ico" aria-hidden="true">👥</span><b>Player vs Player</b><small>Same device</small>
+          </button>
+          <button type="button" class="seg-btn" role="radio" data-value="ai" aria-checked="false">
+            <span class="seg-ico" aria-hidden="true">🤖</span><b>Player vs AI</b><small>You play White</small>
+          </button>
+        </div>
+      </div>
+
+      <div class="opt-group" data-group="level" id="levelGroup" role="radiogroup" aria-label="AI difficulty">
+        <h3>AI difficulty</h3>
+        <div class="seg seg-3">
+          <button type="button" class="seg-btn" role="radio" data-value="easy" aria-checked="false"><b>Easy</b><small>Random moves</small></button>
+          <button type="button" class="seg-btn" role="radio" data-value="medium" aria-checked="false"><b>Medium</b><small>Thinks 3 ahead</small></button>
+          <button type="button" class="seg-btn" role="radio" data-value="hard" aria-checked="false"><b>Hard</b><small>Thinks 4 ahead</small></button>
+        </div>
+      </div>
+
+      <div class="opt-group" data-group="time" role="radiogroup" aria-label="Time control">
+        <h3>Time per player</h3>
+        <div class="seg seg-4">
+          <button type="button" class="seg-btn" role="radio" data-value="1" aria-checked="false"><b>1</b><small>min</small></button>
+          <button type="button" class="seg-btn" role="radio" data-value="5" aria-checked="false"><b>5</b><small>min</small></button>
+          <button type="button" class="seg-btn" role="radio" data-value="10" aria-checked="false"><b>10</b><small>min</small></button>
+          <button type="button" class="seg-btn" role="radio" data-value="0" aria-checked="false"><b>∞</b><small>No timer</small></button>
+        </div>
+      </div>
+
+      <p id="setupRatings" class="rating-preview"></p>
+
+      <div class="modal-actions">
+        <button type="button" id="startBtn" class="btn btn-primary">Start Game</button>
+        <button type="button" id="setupBackBtn" class="btn btn-ghost" hidden>Back to game</button>
+      </div>
+      <button type="button" id="resetRatingsBtn" class="link-btn">Reset ratings to 1000</button>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       PAWN PROMOTION MODAL
+       Opened by script.js when a pawn reaches the last rank.
+       No close button / no backdrop-click / no Esc: the player must
+       pick a piece. The .pc-white / .pc-black class on #promoOptions
+       is set from JS so the pieces match the promoting side.
+       ============================================================ -->
+  <div id="promotionModal" class="modal-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="promoTitle" aria-hidden="true">
+    <div class="modal-card promo-card" tabindex="-1">
+      <h2 id="promoTitle">Promote your pawn</h2>
+      <p class="modal-sub">Tap a piece to continue</p>
+      <div id="promoOptions" class="promo-options">
+        <button type="button" class="promo-btn" data-piece="Q" aria-label="Queen">
+          <span class="pc-slot" data-piece="Q"></span>
+          <span>Queen</span>
+        </button>
+        <button type="button" class="promo-btn" data-piece="R" aria-label="Rook">
+          <span class="pc-slot" data-piece="R"></span>
+          <span>Rook</span>
+        </button>
+        <button type="button" class="promo-btn" data-piece="B" aria-label="Bishop">
+          <span class="pc-slot" data-piece="B"></span>
+          <span>Bishop</span>
+        </button>
+        <button type="button" class="promo-btn" data-piece="N" aria-label="Knight">
+          <span class="pc-slot" data-piece="N"></span>
+          <span>Knight</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       GAME OVER MODAL (checkmate / stalemate)
+       ============================================================ -->
+  <div id="gameOverModal" class="modal-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="gameOverTitle" aria-hidden="true">
+    <div class="modal-card gameover-card">
+      <div class="confetti" id="confetti" aria-hidden="true"></div>
+      <div class="trophy" aria-hidden="true">
+        
+      </div>
+      <h2 id="gameOverTitle">White Wins!</h2>
+      <p id="gameOverSub" class="modal-sub">Checkmate</p>
+      <p id="ratingLine" class="rating-line"></p>
+      <div class="modal-actions">
+        <button type="button" id="playAgainBtn" class="btn btn-primary">Play Again</button>
+        <button type="button" id="closeModalBtn" class="btn btn-ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load order matters: script.js (rules + board UI) first, then the helpers
+       that use it, and game.js last because it connects everything together. -->
+  <script src="script.js"></script>
+  <script src="timer.js"></script>
+  <script src="ai.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
